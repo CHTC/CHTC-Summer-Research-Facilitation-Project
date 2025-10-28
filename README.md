@@ -4,6 +4,8 @@
 **Mentors**: Andrew Owen, Ian Ross  
 **Fellowship Dates**: May 19 – August 8, 2025
 
+Work on this project is continuing Fall 2025 as internship.
+
 ________
 
 
