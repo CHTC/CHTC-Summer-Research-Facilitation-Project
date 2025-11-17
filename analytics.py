@@ -191,6 +191,7 @@ def summarize(cluster_id):
     print(f"{'Efficiency Notes':^80}")
     print("=" * 80)
 
+    #TODO: CHANGE THIS TO BE RESOURCE SPECIFIC  
     def warn(resource, efficiency):
         if efficiency < 15 or efficiency > 80:
             print(f"  ⚠️  {resource} usage is {efficiency:.1f}%")
