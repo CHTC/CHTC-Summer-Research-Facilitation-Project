@@ -1,6 +1,5 @@
 import sys
-import htcondor
-import classad
+import htcondor2
 from difflib import SequenceMatcher
 from tabulate import tabulate
 
@@ -9,8 +8,6 @@ from tabulate import tabulate
 This program buckets and tabulates the held jobs for a cluster
 
 """
-# Global variable to keep track of total jobs
-total_jobs = 0
 
 # Mapping of HoldReasonCodes to their explanations
 HOLD_REASON_CODES = {
@@ -95,12 +92,9 @@ The function then sends the groups of jobs with the same code to be bucketed by 
         Dict[int, List[Tuple[str, int]]]: A dictionary mapping each HoldReasonCode to a list of (HoldReason, HoldReasonSubCode) tuples.
 """
 def group_by_code(cluster_id):
-    global total_jobs
-    schedd = htcondor.Schedd()
+    
+    schedd = htcondor2.Schedd()
     reasons_by_code = {}
-
-    jobs_q = schedd.query(constraint=f"ClusterId == {cluster_id}")
-    total_jobs = len(jobs_q)
 
     for ad in schedd.query(
         constraint=f"ClusterId == {cluster_id} && JobStatus == 5",
@@ -110,6 +104,7 @@ def group_by_code(cluster_id):
         code = ad.eval("HoldReasonCode")
         subcode = ad.eval("HoldReasonSubCode")
 
+        # Displaying only the first line of HoldReason, to bucket more efficiently
         reason = ad.eval("HoldReason").split('. ')[0]
         if "Error from" in reason and ": " in reason:
             parts = reason.split(": ", 1)

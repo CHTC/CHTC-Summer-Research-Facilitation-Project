@@ -62,7 +62,7 @@ def summarize(cluster_id):
     filepath = os.path.join(data_dir, f"cluster_{cluster_id}_jobs.csv")
 
     if not os.path.exists(filepath):
-        print(f"Cluster Data not found, please make sure you have the correct .csv and the correct cluster id")
+        print(f"Cluster Data not found, please make sure you have the correct .csv, filepath and the correct cluster id")
         sys.exit(1)
 
     with open(filepath, newline='', encoding='utf-8') as f:

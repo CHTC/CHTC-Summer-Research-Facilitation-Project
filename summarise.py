@@ -2,6 +2,7 @@ import os
 import csv
 import sys
 from tabulate import tabulate
+from utils import safe_float
 
 """
 This Python script prints a summary table for a given cluster's jobs
@@ -13,7 +14,7 @@ It supports command-line parameter selection and auto-converts RAW values to GiB
 def load_job_data(cluster_id, folder="cluster_data"):
     filepath = os.path.join(folder, f"cluster_{cluster_id}_jobs.csv")
     if not os.path.exists(filepath):
-        print(f"File not found: {filepath}")
+        print(f"Cluster Data not found, please make sure you have the correct .csv, filepath and the correct cluster id ")
         sys.exit(1)
 
     with open(filepath, newline='', encoding='utf-8') as csvfile:
@@ -21,13 +22,6 @@ def load_job_data(cluster_id, folder="cluster_data"):
         jobs = list(reader)
 
     return jobs
-
-# safe conversion to float
-def safe_float(val):
-    try:
-        return float(val)
-    except (ValueError, TypeError):
-        return None
 
 # check if all selected parameters exist in the CSV header
 def validate_params(jobs, selected_params):
