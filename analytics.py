@@ -62,7 +62,7 @@ def summarize(cluster_id):
     filepath = os.path.join(data_dir, f"cluster_{cluster_id}_jobs.csv")
 
     if not os.path.exists(filepath):
-        print(f"File not found: {filepath}")
+        print(f"Cluster Data not found, please make sure you have the correct .csv and the correct cluster id")
         sys.exit(1)
 
     with open(filepath, newline='', encoding='utf-8') as f:
@@ -110,7 +110,7 @@ def summarize(cluster_id):
         if wall_time:
             runtimes.append(wall_time)
 
-    from statistics import median
+    
 
     # Compute per-job efficiency lists
     per_job_cpu_eff = [
@@ -132,9 +132,9 @@ def summarize(cluster_id):
     ]
 
     # Take medians
-    avg_cpu_eff = median(per_job_cpu_eff) if per_job_cpu_eff else 0
-    avg_mem_eff = median(per_job_mem_eff) if per_job_mem_eff else 0
-    avg_disk_eff = median(per_job_disk_eff) if per_job_disk_eff else 0
+    avg_cpu_eff = statistics.median(per_job_cpu_eff) if per_job_cpu_eff else 0
+    avg_mem_eff = statistics.median(per_job_mem_eff) if per_job_mem_eff else 0
+    avg_disk_eff = statistics.median(per_job_disk_eff) if per_job_disk_eff else 0
 
     
     total_jobs = len(jobs)
@@ -208,6 +208,6 @@ def summarize(cluster_id):
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python htcondor_cluster_summary.py <ClusterId>")
+        print("Usage: python analytics.py <ClusterId>")
         sys.exit(1)
     summarize(sys.argv[1])

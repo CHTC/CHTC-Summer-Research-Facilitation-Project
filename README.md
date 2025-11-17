@@ -20,10 +20,10 @@ ________
 
 ## 📁 Repository Structure
 
-  - hold_classifer.py # Diagnoses held jobs and groups by hold reasons
-  - runtime_histogram.py # Plots job runtime distribution using ASCII histograms
-  - resource_usage_summary.py # Summarizes requested vs actual CPU, memory, disk
-  - cluster_status_dashboard.py # Prints status distribution of jobs in a cluster
+  - hold_bucket.py # Diagnoses held jobs and groups by hold reasons
+  - histogram.py   # Plots job runtime distribution using ASCII histograms
+  - analytics.py   # Summarizes requested vs actual CPU, memory, disk
+  - dashboard.py   # Prints status distribution of jobs in a cluster
   - README.md # This file
 
 ________

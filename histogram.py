@@ -11,8 +11,7 @@ of the runtimes for a cluster. The runtimes are grouped by percentile range of t
 
 """
 
-# Time limit for fast jobs, 600 by default
-is_red = median_time < 600
+
 
 # function to format seconds into human readable format
 def format_seconds_human(seconds):
@@ -60,11 +59,13 @@ def format_epoch_human_relative(epoch_seconds):
 
 # function to print the output
 def histogram(cluster_id, df, percentiles=10, max_width=20, show_fast_jobs=False):
+
+    # Cluster data not found, or no recorded runtimes in the cluster (all jobs are still running)
     if df.empty or "RemoteWallClockTime" not in df.columns:
         print("[WARN] No valid data to plot.")
         return
     
-    cluster_id = cluster_id
+    
     runtimes = df["RemoteWallClockTime"].astype(float).to_numpy()
     cluster_ids = df["ClusterId"].astype(str).to_numpy()
     proc_ids = df["ProcId"].astype(str).to_numpy()
@@ -126,6 +127,8 @@ def histogram(cluster_id, df, percentiles=10, max_width=20, show_fast_jobs=False
 
         median_time = np.median(in_bin_times) if len(in_bin_times) > 0 else 0
 
+        # Time limit for fast jobs, 600 by default
+        is_red = median_time < 600
 
         color = RED if is_red else ""
         if is_red:

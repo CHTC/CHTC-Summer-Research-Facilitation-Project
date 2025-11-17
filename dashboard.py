@@ -1,7 +1,6 @@
 import sys
 import math
-import htcondor
-import classad
+import htcondor2
 
 
 """
@@ -10,7 +9,7 @@ This program provides an ASCII dashboard for the status of jobs in a cluster
 
 # get data from the schedd
 def fetch_counts(clusterId, job_states):
-    schedd = htcondor.Schedd()
+    schedd = htcondor2.Schedd()
     counts = { state: 0 for state in job_states }
     # history (finished jobs)
     for ad in schedd.history(
@@ -18,7 +17,7 @@ def fetch_counts(clusterId, job_states):
             projection = ["JobStatus"],
             match = -1
         ):
-        counts[job_states[ad.eval("JobStatus")]] += 1
+        counts[job_states[ad.eval("JobStatus")-1]] += 1
     # queue (running / pending jobs)
     for ad in schedd.query(
             constraint = f"ClusterId == {clusterId}",
@@ -36,6 +35,12 @@ def draw_bars(counts, job_states, bar_width=50):
     count_width   = len(str(max_count))
     per_width     = len("100.0%")
     total_count   = sum(counts.values())
+
+    # invalid cluster id
+    if(total_count == 0 ):
+        print("No jobs in the cluster found, please recheck clusterId")
+        exit()
+
 
     # header
     header = (
@@ -63,7 +68,7 @@ def draw_bars(counts, job_states, bar_width=50):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python dashboard_once.py <ClusterId>")
+        print("Usage: python dashboard.py <ClusterId>")
         sys.exit(1)
 
     clusterId  = sys.argv[1]
