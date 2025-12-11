@@ -2,6 +2,9 @@ import sys
 import htcondor2
 from difflib import SequenceMatcher
 from tabulate import tabulate
+import argparse
+import datetime
+import time as time_module
 
 
 """
@@ -50,59 +53,197 @@ HOLD_REASON_CODES = {
     48: {"label": "HookShadowPrepareJobFailure", "reason": "Prepare job shadow hook failed when it was executed; status code indicated job should be held."}
 }
 
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(
+        description='Analyze and categorize held jobs in an HTCondor cluster',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  Basic usage:
+    %(prog)s 4641492
+    
+  Filter and sort:
+    %(prog)s 4641492 --min-count 10 --sort-by time
+    %(prog)s 4641492 --top 5 --sort-by percent
+    %(prog)s 4641492 --code 34 --threshold 0.8
+    
+  Export for bulk operations:
+    %(prog)s 4641492 --export-jobs held.txt
+    condor_release $(cat held.txt)
+    
+  Advanced analysis:
+    %(prog)s 4641492 --show-job-ids --sort-by time --min-count 5
+    %(prog)s 4641492 --code 12 --export-jobs output_errors.txt
+  
+For full list of hold codes, see the output legend or:
+  https://htcondor.readthedocs.io/en/latest/
+        """
+    )
+    
+    parser.add_argument(
+        'cluster_id', 
+        help='HTCondor cluster ID to analyze (required)'
+    )
+    
+    # Filtering options
+    filter_group = parser.add_argument_group('filtering options')
+    filter_group.add_argument(
+        '--min-count', 
+        type=int, 
+        default=1,
+        metavar='N',
+        help='only show error buckets with at least N jobs (default: 1). '
+             'Use this to filter out rare errors. Example: --min-count 10'
+    )
+    filter_group.add_argument(
+        '--top', 
+        type=int,
+        metavar='N',
+        help='show only the top N most common error buckets. '
+             'Useful for focusing on major issues. Example: --top 5'
+    )
+    filter_group.add_argument(
+        '--code', 
+        type=int,
+        metavar='CODE',
+        help='filter results to show only jobs with specific HoldReasonCode. '
+             'Common codes: 3 (JobPolicy), 34 (Memory), 12 (Output Transfer), '
+             '13 (Input Transfer). Example: --code 34'
+    )
+    
+    # Sorting options
+    sort_group = parser.add_argument_group('sorting options')
+    sort_group.add_argument(
+        '--sort-by', 
+        choices=['count', 'code', 'percent', 'time'], 
+        default='count',
+        help='sort results by different criteria:\n'
+             '  count   - number of jobs (default, most common first)\n'
+             '  code    - hold reason code (numerical order)\n'
+             '  percent - percentage of total held jobs\n'
+             '  time    - average hold duration (longest first)\n'
+             'Example: --sort-by time'
+    )
+    
+    # Bucketing options
+    bucket_group = parser.add_argument_group('bucketing options')
+    bucket_group.add_argument(
+        '--threshold', 
+        type=float, 
+        default=0.7,
+        metavar='RATIO',
+        help='similarity threshold (0.0-1.0) for grouping similar error messages. '
+             'Higher values = stricter matching (more buckets). '
+             'Lower values = looser matching (fewer, larger buckets). '
+             'Default: 0.7. Try 0.8 for stricter or 0.6 for looser grouping. '
+             'Example: --threshold 0.8'
+    )
+    
+    # Output options
+    output_group = parser.add_argument_group('output options')
+    output_group.add_argument(
+        '--show-job-ids', 
+        action='store_true',
+        help='display ProcIds in the output table. Useful for identifying '
+             'which specific jobs are affected. Note: only shows first few IDs '
+             'for large buckets to keep output readable'
+    )
+    output_group.add_argument(
+        '--export-jobs', 
+        metavar='FILENAME',
+        help='export all held job IDs to a file for bulk operations. '
+             'The file will contain one job ID per line in format ClusterId.ProcId. '
+             'Use with condor_release or condor_rm for batch processing. '
+             'Example: --export-jobs held.txt'
+    )
+    
+    return parser.parse_args()
+
 
 """
 Groups similar hold reason messages using fuzzy string matching (difflib.SequenceMatcher).
-The default threshold has been kept as 0.7 as was found optimal by testing error messages
 
     Parameters:
-        reason_list (List[str]): List of textual hold reasons for the jobs.
-        subcodes (List[int]): Corresponding subcodes for the reasons.
+        reason_list (List[Tuple[str, int, int]]): List of (reason, subcode, proc_id) tuples.
         threshold (float): Similarity ratio (between 0 and 1) above which reasons are considered similar.
 
     Returns:
-        List[List[Tuple[str, int]]]: A list of "buckets", where each bucket contains tuples of (reason, subcode)
-                                     that are textually similar to each other.
+        List[List[Tuple[str, int, int, int]]]: Buckets of (reason, subcode, proc_id, hold_time) tuples.
 """
-
-def bucket_reasons_with_subcodes(reason_list, subcodes, threshold=0.7):
+def bucket_reasons_with_data(reason_data, threshold=0.7):
     buckets = []
-    for reason, subcode in zip(reason_list, subcodes):
+    for reason, subcode, proc_id, hold_time in reason_data:
         placed = False
         for bucket in buckets:
             ratio = SequenceMatcher(None, reason, bucket[0][0]).ratio()
             if ratio >= threshold:
-                bucket.append((reason, subcode))
+                bucket.append((reason, subcode, proc_id, hold_time))
                 placed = True
                 break
         if not placed:
-            buckets.append([(reason, subcode)])
+            buckets.append([(reason, subcode, proc_id, hold_time)])
     return buckets
 
+
+def format_duration(seconds):
+    """Format duration in a human-readable way"""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    elif seconds < 3600:
+        minutes = seconds / 60
+        return f"{minutes:.1f}m"
+    elif seconds < 86400:
+        hours = seconds / 3600
+        return f"{hours:.1f}h"
+    else:
+        days = seconds / 86400
+        return f"{days:.1f}d"
+
+
+def calculate_avg_hold_time(bucket):
+    """Calculate average time jobs have been held in a bucket"""
+    current_time = time_module.time()
+    hold_durations = []
+    
+    for _, _, _, hold_time in bucket:
+        if hold_time > 0:
+            duration = current_time - hold_time
+            hold_durations.append(duration)
+    
+    if not hold_durations:
+        return None, "N/A"
+    
+    avg_seconds = sum(hold_durations) / len(hold_durations)
+    return avg_seconds, format_duration(avg_seconds)
 
 
 """ 
 Queries the HTCondor schedd for held jobs in the specified cluster and groups them by their HoldReasonCode.
-The function then sends the groups of jobs with the same code to be bucketed by string similarity in bucket_reasons_with_subcodes()
+Now also collects ProcId and EnteredCurrentStatus (hold time).
 
     Parameters:
         cluster_id (str or int): The ID of the cluster to analyze.
 
     Returns:
-        Dict[int, List[Tuple[str, int]]]: A dictionary mapping each HoldReasonCode to a list of (HoldReason, HoldReasonSubCode) tuples.
+        Dict[int, List[Tuple[str, int, int, int]]]: Maps HoldReasonCode to list of 
+                                                      (HoldReason, HoldReasonSubCode, ProcId, HoldTime) tuples.
 """
 def group_by_code(cluster_id):
-    
     schedd = htcondor2.Schedd()
     reasons_by_code = {}
 
+    print("Fetching held jobs from cluster...", file=sys.stderr)
+    
     for ad in schedd.query(
         constraint=f"ClusterId == {cluster_id} && JobStatus == 5",
-        projection=["HoldReasonCode", "HoldReason", "HoldReasonSubCode"],
+        projection=["ProcId", "HoldReasonCode", "HoldReason", "HoldReasonSubCode", "EnteredCurrentStatus"],
         limit=-1
     ):
         code = ad.eval("HoldReasonCode")
         subcode = ad.eval("HoldReasonSubCode")
+        proc_id = ad.eval("ProcId")
+        hold_time = ad.get("EnteredCurrentStatus", 0)
 
         # Displaying only the first line of HoldReason, to bucket more efficiently
         reason = ad.eval("HoldReason").split('. ')[0]
@@ -111,48 +252,176 @@ def group_by_code(cluster_id):
             if len(parts) == 2:
                 reason = parts[1]
 
-        reasons_by_code.setdefault(code, []).append((reason, subcode))
+        reasons_by_code.setdefault(code, []).append((reason, subcode, proc_id, hold_time))
 
+    print(f"Found {sum(len(v) for v in reasons_by_code.values())} held jobs\n", file=sys.stderr)
     return reasons_by_code
 
 
-
-
-
-""" 
-Processes grouped hold reasons and prints:
-        - A table summarizing the percentage of jobs held for each bucketed reason.
-        - A legend explaining each HoldReasonCode.
-The function also take the HoldReason string and stores only the error message. 
-
-NOTE: The information about the slots which sent the error which can be a future feature 
+"""
+Analyzes and prints time-based statistics for held jobs.
 
     Parameters:
-        reasons_by_code (Dict[int, List[Tuple[str, int]]]): Dictionary grouping hold reasons by HoldReasonCode.
-        cluster_id (str or int): The cluster ID being analyzed.
+        reasons_by_code (Dict): Dictionary grouping hold reasons by HoldReasonCode.
+"""
+def print_time_analysis(reasons_by_code):
+    all_times = []
+    for pairs in reasons_by_code.values():
+        all_times.extend([hold_time for _, _, _, hold_time in pairs if hold_time > 0])
+    
+    if not all_times:
+        print("⏱️  Time Analysis: No timestamp data available\n")
+        return
+    
+    earliest = min(all_times)
+    latest = max(all_times)
+    current_time = time_module.time()
+    
+    print("⏱️  Time Analysis:")
+    print(f"  First held: {datetime.datetime.fromtimestamp(earliest).strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"  Last held:  {datetime.datetime.fromtimestamp(latest).strftime('%Y-%m-%d %H:%M:%S')}")
+    duration_hours = (latest - earliest) / 3600
+    print(f"  Duration:   {duration_hours:.1f} hours")
+    
+    # Calculate overall average hold time
+    avg_hold_duration = (current_time - sum(all_times) / len(all_times))
+    print(f"  Avg hold:   {format_duration(avg_hold_duration)}")
+    
+    print()
+
 
 """
-def bucket_and_print_table(reasons_by_code, cluster_id):
-    print()
-    print("Cluster ID:", cluster_id)
+Export job IDs with hold reason codes to a CSV file for bulk operations.
+
+    Parameters:
+        all_buckets (List): All buckets with job data.
+        reasons_by_code (Dict): Dictionary mapping codes to job data.
+        cluster_id (str): The cluster ID.
+        filename (str): Output filename.
+"""
+def export_job_ids(all_buckets, reasons_by_code, cluster_id, filename):
+    import csv
+    
+    # Build a mapping of proc_id to hold reason code
+    proc_to_code = {}
+    for code, pairs in reasons_by_code.items():
+        for _, _, proc_id, _ in pairs:
+            proc_to_code[proc_id] = code
+    
+    # Collect job IDs with their codes
+    job_data = []
+    seen_jobs = set()
+    for bucket in all_buckets:
+        for _, _, proc_id, _ in bucket:
+            job_id = f"{cluster_id}.{proc_id}"
+            if job_id not in seen_jobs:
+                seen_jobs.add(job_id)
+                hold_code = proc_to_code.get(proc_id, "Unknown")
+                hold_label = HOLD_REASON_CODES.get(hold_code, {}).get("label", f"Code {hold_code}")
+                job_data.append((job_id, hold_code, hold_label))
+    
+    # Sort by job ID for consistency
+    job_data.sort(key=lambda x: (int(x[0].split('.')[0]), int(x[0].split('.')[1])))
+    
+    # Write to CSV
+    with open(filename, "w", newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["JobID", "HoldReasonCode", "HoldReasonLabel"])
+        writer.writerows(job_data)
+    
+    print(f"✓ Exported {len(job_data)} unique job IDs to {filename}\n")
+
+""" 
+Processes grouped hold reasons and prints a detailed table with filtering and sorting options.
+
+    Parameters:
+        reasons_by_code (Dict): Dictionary grouping hold reasons by HoldReasonCode.
+        cluster_id (str or int): The cluster ID being analyzed.
+        args: Parsed command line arguments.
+"""
+def bucket_and_print_table(reasons_by_code, cluster_id, args):
+    print(f"Cluster ID: {cluster_id}")
 
     held_jobs = sum(len(pairs) for pairs in reasons_by_code.values())
-    print("Held Jobs in Cluster:", held_jobs)
+    print(f"Held Jobs in Cluster: {held_jobs}\n")
+    
+    # Time analysis
+    print_time_analysis(reasons_by_code)
 
     example_rows = []
+    all_buckets = []
     seen_codes = set()
 
+    # Filter by specific code if requested
+    if args.code:
+        if args.code not in reasons_by_code:
+            print(f"No held jobs found with HoldReasonCode {args.code}")
+            return
+        reasons_by_code = {args.code: reasons_by_code[args.code]}
+
     for code, pairs in reasons_by_code.items():
-        reasons, subcodes = zip(*pairs)
         label = HOLD_REASON_CODES.get(code, {}).get("label", f"Code {code}")
         seen_codes.add(code)
-        buckets = bucket_reasons_with_subcodes(reasons, subcodes)
+        buckets = bucket_reasons_with_data(pairs, threshold=args.threshold)
+        
         for bucket in buckets:
-            example_reason, subcode = bucket[0]
+            # Apply min-count filter
+            if len(bucket) < args.min_count:
+                continue
+                
+            all_buckets.append(bucket)
+            example_reason, subcode, proc_id, hold_time = bucket[0]
             percent = (len(bucket) / held_jobs) * 100 if held_jobs > 0 else 0
-            example_rows.append([label, subcode, f"{percent:.1f}% ({len(bucket)})", example_reason])
+            
+            # Calculate average hold time for this bucket
+            avg_hold_seconds, avg_hold_str = calculate_avg_hold_time(bucket)
+            
+            # Prepare job IDs string if requested
+            job_ids_str = ""
+            if args.show_job_ids:
+                if len(bucket) <= 5:
+                    ids = [str(p) for _, _, p, _ in bucket]
+                    job_ids_str = ", ".join(ids)
+                else:
+                    ids = [str(p) for _, _, p, _ in bucket[:3]]
+                    job_ids_str = f"{', '.join(ids)}... (+{len(bucket)-3} more)"
+            
+            row = [
+                label, 
+                subcode, 
+                f"{percent:.1f}% ({len(bucket)})", 
+                avg_hold_str,
+                example_reason
+            ]
+            if args.show_job_ids:
+                row.append(job_ids_str)
+            
+            # Store avg_hold_seconds for sorting
+            row.append(avg_hold_seconds if avg_hold_seconds else 0)
+            
+            example_rows.append(row)
 
-    headers = ["Hold Reason Label", "SubCode", "% of Held Jobs (Count)", "Example Reason"]
+    # Sort results
+    if args.sort_by == 'count':
+        example_rows.sort(key=lambda x: int(x[2].split('(')[1].split(')')[0]), reverse=True)
+    elif args.sort_by == 'code':
+        example_rows.sort(key=lambda x: x[0])
+    elif args.sort_by == 'percent':
+        example_rows.sort(key=lambda x: float(x[2].split('%')[0]), reverse=True)
+    elif args.sort_by == 'time':
+        example_rows.sort(key=lambda x: x[-1], reverse=True)  # Sort by avg_hold_seconds
+    
+    # Remove the avg_hold_seconds column (used only for sorting)
+    example_rows = [row[:-1] for row in example_rows]
+    
+    # Apply top N filter
+    if args.top:
+        example_rows = example_rows[:args.top]
+
+    headers = ["Hold Reason Label", "SubCode", "% of Held Jobs (Count)", "Avg Hold Time", "Example Reason"]
+    if args.show_job_ids:
+        headers.append("Job IDs (ProcId)")
+    
     print(tabulate(example_rows, headers=headers, tablefmt="grid"))
 
     print("\nLegend:")
@@ -161,26 +430,91 @@ def bucket_and_print_table(reasons_by_code, cluster_id):
         entry = HOLD_REASON_CODES.get(code, {})
         legend.append([code, entry.get("label", "Unknown"), entry.get("reason", "No description available.")])
     print(tabulate(legend, headers=["Code", "Label", "Reason"], tablefmt="fancy_grid"))
+    
+
+    # Export job IDs if requested
+    if args.export_jobs:
+        export_job_ids(all_buckets, reasons_by_code, cluster_id, args.export_jobs)
+
+def get_hold_bucket_data(cluster_id, threshold=0.7):
+    """
+    Return held jobs analysis data as a dictionary for use by cluster_health.py
+    Does not print anything, just returns computed metrics.
+    
+    Returns:
+        dict: Dictionary containing held jobs analysis
+    """
+    try:
+        reasons_by_code = group_by_code(cluster_id)
+        
+        if not reasons_by_code:
+            return {
+                "held_count": 0,
+                "held_codes": {},
+                "held_reasons": {},
+                "unique_reasons": 0,
+                "buckets": [],
+            }
+        
+        held_count = sum(len(pairs) for pairs in reasons_by_code.values())
+        held_codes = {}
+        all_buckets = []
+        
+        for code, pairs in reasons_by_code.items():
+            held_codes[code] = len(pairs)
+            buckets = bucket_reasons_with_data(pairs, threshold=threshold)
+            all_buckets.extend(buckets)
+        
+        # Get top reasons
+        held_reasons = {}
+        for bucket in all_buckets:
+            reason = bucket[0][0]  # Get example reason from first job
+            held_reasons[reason] = len(bucket)
+        
+        # Time analysis
+        all_times = []
+        for pairs in reasons_by_code.values():
+            all_times.extend([hold_time for _, _, _, hold_time in pairs if hold_time > 0])
+        
+        time_stats = {}
+        if all_times:
+            import time as time_module
+            current_time = time_module.time()
+            earliest = min(all_times)
+            latest = max(all_times)
+            avg_hold_duration = (current_time - sum(all_times) / len(all_times))
+            
+            time_stats = {
+                "first_held": earliest,
+                "last_held": latest,
+                "duration_hours": (latest - earliest) / 3600,
+                "avg_hold_duration": avg_hold_duration,
+            }
+        
+        return {
+            "held_count": held_count,
+            "held_codes": held_codes,
+            "held_reasons": held_reasons,
+            "unique_reasons": len(held_reasons),
+            "buckets": all_buckets,
+            "time_stats": time_stats,
+        }
+    except Exception as e:
+        return {
+            "held_count": 0,
+            "error": str(e)
+        }
 
 
 
-
-
-""" 
-Main Execution Block:
-    - Parses the cluster ID from command-line arguments.
-    - Calls `group_by_code()` to gather held job reasons.
-    - Passes the results to `bucket_and_print_table()` to display the report.
-
-Example:
-    $ python condor_hold_bucket.py 123456
-"""
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python hold_bucket.py <ClusterId>")
-        sys.exit(1)
-
-    cluster_id = sys.argv[1]
+    args = parse_args()
+    
+    cluster_id = args.cluster_id
     reasons_by_code = group_by_code(cluster_id)
-    bucket_and_print_table(reasons_by_code, cluster_id)
-
+    
+    if not reasons_by_code:
+        print(f"No held jobs found in cluster {cluster_id}")
+        sys.exit(0)
+    
+    bucket_and_print_table(reasons_by_code, cluster_id, args)
