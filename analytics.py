@@ -5,6 +5,8 @@ import statistics
 from collections import Counter, defaultdict
 from datetime import timedelta
 from utils import safe_float
+import argparse
+
 
 """
 This program provides a report on the resource request and usage for a cluster
@@ -482,7 +484,13 @@ def get_analytics_data(cluster_id):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python analytics.py <ClusterId>")
-        sys.exit(1)
-    summarize(sys.argv[1])
+
+    parser = argparse.ArgumentParser(
+                    prog='analytics',
+                    description='The program provides analytics of specific cluster',
+                    epilog='')
+    
+    parser.add_argument('-cluster_id',required=True)    
+    args = parser.parse_args()
+
+    summarize(args.cluster_id)
