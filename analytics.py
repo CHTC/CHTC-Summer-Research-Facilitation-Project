@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from datetime import timedelta
 from utils import safe_float
 import argparse
+import textwrap
 
 
 """
@@ -13,6 +14,115 @@ This program provides a report on the resource request and usage for a cluster
 
 """
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        prog="condor_analytics",
+        description=textwrap.dedent(
+            """
+            HTCondor Cluster Resource Analytics Tool
+            
+            Analyzes resource utilization and efficiency for completed HTCondor job clusters.
+            Generates comprehensive reports on memory, disk, and CPU usage patterns to 
+            identify optimization opportunities and reduce resource waste.
+            
+            The program reads job execution data from CSV files and computes:
+              • Statistical summaries (min, Q1, median, Q3, max, stddev)
+              • Resource efficiency metrics (actual usage vs. requested)
+              • Usage distribution histograms
+              • Optimization recommendations based on P95 usage patterns
+              
+            Data files must be located in: cluster_data/cluster_{id}_jobs.csv
+            
+            Example usage:
+              python analytics.py -cluster_id 12345
+              python analytics.py --cluster_id 67890
+            """
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=textwrap.dedent(
+            """
+            Output Sections:
+            ----------------
+            1. Cluster Summary
+               - Total job count and average runtime
+               
+            2. Requested Resources
+               - Distribution tables for memory, disk, CPU, GPU requests
+               
+            3. Usage Statistics
+               - Five-number summaries of actual resource consumption
+               
+            4. Overall Utilization
+               - Visual progress bars showing median efficiency percentages
+               
+            5. Usage Distribution
+               - Histograms showing job counts by usage ranges
+               
+            6. Optimization Recommendations
+               - Suggested resource reductions based on P95 + buffer methodology
+               - Potential savings in resource-hours
+               - Affected job counts
+               
+            7. Efficiency Summary
+               - Per-resource warnings about over/under-provisioning
+               - Efficiency thresholds:
+                   < 15%  : Significant over-provisioning ⚠️
+                   15-50% : Consider reducing requests ⚠️
+                   50-80% : Acceptable ✅
+                   > 80%  : Well-optimized ✅
+            
+            Efficiency Calculation:
+            -----------------------
+            Efficiency = (Actual Usage / Requested Amount) × 100
+            
+            • Memory: ResidentSetSize / RequestMemory
+            • Disk: DiskUsage / RequestDisk  
+            • CPU: (RemoteSysCpu / RequestCpus) / RemoteWallClockTime
+            
+            Median per-job efficiency is used to avoid skew from outliers.
+            
+            Recommendation Methodology:
+            ---------------------------
+            • Memory: P95 usage + 10% buffer
+            • Disk: P95 usage + 20% buffer
+            • CPU: Scaled by efficiency with 20% buffer
+            
+            Recommendations trigger when:
+              - Suggested value < 80% of current median request
+              - Potential savings > 20% reduction
+            
+            Required CSV Columns:
+            ---------------------
+            RequestMemory, ResidentSetSize_RAW, RequestDisk, DiskUsage_RAW,
+            RequestCpus, RequestGpus, RemoteUserCpu, RemoteSysCpu, 
+            RemoteWallClockTime
+            
+            Notes:
+            ------
+            • All memory conversions: MiB/KiB → GiB for readability
+            • Runtime displayed as HH:MM:SS format
+            • Missing data fields are handled gracefully
+            • Requires at least 2 data points for statistical summaries
+            
+            For integration with other tools, use get_analytics_data(cluster_id)
+            to retrieve metrics programmatically without printing.
+            """
+        ),
+    )
+
+    parser.add_argument(
+        '-cluster_id',
+        '--cluster_id',
+        required=True,
+        metavar='ID',
+        help='HTCondor cluster ID to analyze (required). Must correspond to existing CSV file.'
+    )
+
+    # Remove the manual -h/--help argument - it's added automatically by argparse
+
+    args = parser.parse_args()
+    return args
 
 # to print the bar visualizations
 def bar(pct, width=50):
@@ -482,15 +592,6 @@ def get_analytics_data(cluster_id):
         "savings": savings,
     }
 
-
 if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser(
-                    prog='analytics',
-                    description='The program provides analytics of specific cluster',
-                    epilog='')
-    
-    parser.add_argument('-cluster_id',required=True)    
-    args = parser.parse_args()
-
+    args = parse_args()
     summarize(args.cluster_id)
