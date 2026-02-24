@@ -6,7 +6,7 @@ import htcondor2
 
 
 """
-This program provides an ASCII dashboard for the status of jobs in a cluster
+This program provides a pretty ASCII dashboard for the status of jobs in a cluster
 """
 
 
