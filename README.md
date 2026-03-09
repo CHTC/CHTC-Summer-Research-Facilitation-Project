@@ -17,18 +17,32 @@ A command-line toolkit for diagnosing and profiling HTCondor job clusters. Given
 | `hold_bucket.py` | Held-job classifier and bucketer |
 | `summarize.py` | Aggregated cluster health report (pulls from all other tools) |
 | `utils.py` | Shared utilities (`safe_float`, `load_csv_for_cluster`, time formatters) |
+| `Makefile` | Shortcuts for all common workflows (`make summary CLUSTER=12345`, etc.) |
+| `requirements.txt` | Python dependency list |
 
 ---
 
 ## Quickstart
 
 ```bash
+# Step 1 — fetch and cache job data (only needed once per cluster)
+python fetch_cluster_data.py 12345
 
-python main.py summarize  12345   # aggregated health report (good starting point)
-python main.py analytics  12345   # resource utilisation deep-dive
-python main.py histogram  12345   # runtime distribution
-python main.py dashboard  12345   # job status bar chart
-python main.py hold       12345   # held job analysis
+# Step 2 — run any analysis
+python main.py summary   12345   # aggregated health report (good starting point)
+python main.py resources 12345   # resource utilisation deep-dive
+python main.py runtimes  12345   # runtime distribution
+python main.py status    12345   # job status bar chart
+python main.py held      12345   # held job analysis
+```
+
+Or use the Makefile:
+
+```bash
+make fetch   CLUSTER=12345
+make summary CLUSTER=12345
+make quick   CLUSTER=12345   # fetch + summary in one step
+make demo    CLUSTER=12345   # all tools in sequence with prompts
 ```
 
 > **Note:** If you run a subcommand and no cached CSV exists for that cluster, the data will be fetched automatically before the analysis runs. `fetch_cluster_data.py` only needs to be run explicitly if you want to pre-fetch, refresh stale data, or save to a custom output directory.
@@ -234,3 +248,4 @@ This file is created by `fetch_cluster_data.py` or `query.py`, or automatically 
 - `htcondor2` (HTCondor Python bindings — typically provided by the system HTCondor installation rather than pip)
 - `numpy`
 - `tabulate`
+- `elasticsearch` (only required for `query.py` / `make fetch-es`)
