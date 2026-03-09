@@ -25,10 +25,7 @@ A command-line toolkit for diagnosing and profiling HTCondor job clusters. Given
 ## Quickstart
 
 ```bash
-# Step 1 — fetch and cache job data (only needed once per cluster)
-python fetch_cluster_data.py 12345
 
-# Step 2 — run any analysis
 python main.py summary   12345   # aggregated health report (good starting point)
 python main.py resources 12345   # resource utilisation deep-dive
 python main.py runtimes  12345   # runtime distribution
