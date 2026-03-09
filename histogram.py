@@ -1,182 +1,175 @@
-import sys
-import os
 import numpy as np
-from utils import safe_float, load_csv_for_cluster, format_seconds_human, format_epoch_human_relative
-
+import pandas as pd
+from utils import load_csv_for_cluster, format_seconds_human, format_epoch_human_relative
 
 """
 This program takes data from the cluster_data folder and gives an ASCII histogram
-of the runtimes for a cluster. The runtimes are grouped by percentile range.
+and ASCII CDF of the runtimes for a cluster.
 """
 
 
+# ── Data loading ───────────────────────────────────────────────────────────────
 
-def scatter_plot_job_index_vs_runtime(cluster_id, jobs, height=12, width=60):
-    job_indices = []
-    runtimes = []
+def load_data_for_cluster(cluster_id):
+    """Load cluster CSV and return a cleaned DataFrame."""
+    jobs = load_csv_for_cluster(cluster_id)
+    df = pd.DataFrame(jobs)
 
-    for idx, job in enumerate(jobs):
-        runtime = safe_float(job.get("RemoteWallClockTime"))
-        if runtime is not None:
-            job_indices.append(idx)
-            runtimes.append(runtime)
+    for col in ["RemoteWallClockTime", "QDate", "CompletionDate"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    if not runtimes:
-        print("[WARN] No valid runtime data for scatter plot.")
+    return df
+
+
+def _get_positive_runtimes(df):
+    """Return positive runtime Series, or None if missing/empty."""
+    if "RemoteWallClockTime" not in df.columns:
+        print("[WARN] Missing RemoteWallClockTime column.")
+        return None
+
+    rt = df["RemoteWallClockTime"].dropna()
+    rt = rt[rt > 0]
+
+    if rt.empty:
+        print("[WARN] No valid runtime data found.")
+        return None
+
+    return rt
+
+
+# ── Cumulative Distribution ────────────────────────────────────────────────────
+
+def cumulative_distribution(cluster_id, df, height=20, width=60):
+    """
+    Print an ASCII CDF line plot of job runtimes.
+
+    X-axis: runtime over full observed range.
+    Y-axis: cumulative % of jobs.
+    Reads as: "X% of jobs completed within Y time."
+    """
+    rt = _get_positive_runtimes(df)
+    if rt is None:
         return
 
-    job_indices = np.array(job_indices)
-    runtimes = np.array(runtimes)
+    runtimes = np.sort(rt.values)
+    n = len(runtimes)
 
-    max_index = len(jobs) - 1
-    p95_runtime = np.percentile(runtimes, 95)
-    max_runtime = p95_runtime
-    outliers = np.sum(runtimes > p95_runtime)
+    marker_pcts = [25, 50, 75, 90, 95]
+    marker_times = {p: float(np.percentile(runtimes, p)) for p in marker_pcts}
 
-    x_positions = (
-        (job_indices / max_index * (width - 1)).astype(int)
-        if max_index > 0
-        else np.zeros(len(job_indices), dtype=int)
-    )
-    capped_runtimes = np.minimum(runtimes, max_runtime)
-    y_positions = (
-        (max_runtime - capped_runtimes) / max_runtime * (height - 1)
-    ).astype(int)
-
+    x_max = float(runtimes[-1])
     plot = [[" " for _ in range(width)] for _ in range(height)]
-    density = [[0 for _ in range(width)] for _ in range(height)]
 
-    for x, y in zip(x_positions, y_positions):
-        if 0 <= y < height and 0 <= x < width:
-            density[y][x] += 1
+    prev_y = height - 1
+    for x in range(width):
+        rt_at_x = (x / (width - 1)) * x_max if width > 1 else x_max
+        cum_pct = float(np.searchsorted(runtimes, rt_at_x, side="right")) / n
+        y = int((1.0 - cum_pct) * (height - 1))
+        y = max(0, min(height - 1, y))
 
-    for y in range(height):
+        y_lo, y_hi = min(y, prev_y), max(y, prev_y)
+        for fy in range(y_lo, y_hi + 1):
+            plot[fy][x] = "·"
+        plot[y][x] = "•"
+        prev_y = y
+
+    # Percentile guideline rows.
+    # Multiple percentiles may map to the same row, so store a list.
+    marker_rows = {}
+    for p, t in marker_times.items():
+        row = int((1.0 - p / 100.0) * (height - 1))
+        row = max(0, min(height - 1, row))
+        marker_rows.setdefault(row, []).append((p, t))
+
         for x in range(width):
-            if density[y][x] > 0:
-                if density[y][x] == 1:
-                    plot[y][x] = "·"
-                elif density[y][x] <= 3:
-                    plot[y][x] = "•"
-                else:
-                    plot[y][x] = "█"
+            if plot[row][x] == " ":
+                plot[row][x] = "╌"
 
-    correlation = np.corrcoef(job_indices, runtimes)[0, 1]
+    CYAN = "\033[96m"
+    YELLOW = "\033[93m"
+    RESET = "\033[0m"
 
-    third = len(runtimes) // 3
-    if third > 0:
-        first_third_median = np.median(runtimes[:third])
-        last_third_median = np.median(runtimes[-third:])
-    else:
-        first_third_median = last_third_median = np.median(runtimes)
+    label_w = 5
 
-    median_runtime = np.median(runtimes)
+    print(f"  {'Cumulative Distribution':^{width}}")
+    print(f"{'':>{label_w}}  {'-' * width}")
 
-    print(f"\n{'Job Index vs Runtime Scatter Plot':^70}")
-    print("=" * 70)
-    print(
-        f"Jobs: {len(runtimes)}  |  Median: {format_seconds_human(median_runtime)}"
-        f"  |  Correlation: {correlation:.3f}"
+    for i, row in enumerate(plot):
+        pct_val = round(100 * (1.0 - i / (height - 1))) if height > 1 else 100
+        label = f"{pct_val}%" if pct_val in (0, 25, 50, 75, 100) else ""
+
+        annotation = ""
+        if i in marker_rows:
+            parts = [
+                f"{format_seconds_human(t)} (P{p})"
+                for p, t in sorted(marker_rows[i], key=lambda x: x[0])
+            ]
+            annotation = "  " + " | ".join(parts)
+
+        coloured = []
+        for cell in row:
+            if cell in ("•", "·"):
+                coloured.append(f"{CYAN}{cell}{RESET}")
+            elif cell == "╌":
+                coloured.append(f"{YELLOW}{cell}{RESET}")
+            else:
+                coloured.append(cell)
+
+        print(f"{label:>{label_w}} |{''.join(coloured)}{annotation}")
+
+    print(f"{'':>{label_w}} +{'-' * width}")
+
+    col = max(1, width // 4)
+    ticks = (
+        f"{'0s':<{col}}"
+        f"{format_seconds_human(x_max * 0.25):<{col}}"
+        f"{format_seconds_human(x_max * 0.50):<{col}}"
+        f"{format_seconds_human(x_max * 0.75):<{max(1, col - 1)}}"
+        f"{format_seconds_human(x_max):>{col}}"
     )
+    print(f"{'':>{label_w + 1}} {ticks}")
+    print(f"{'':>{label_w + 1}} {'Runtime':^{width}}")
 
-    if correlation > 0.4:
-        print("Trend: Later jobs run LONGER ⚠️")
-    elif correlation < -0.4:
-        print("Trend: Later jobs run FASTER ✓")
-    else:
-        print("Trend: Consistent runtime across jobs ✓")
-    print()
-
-    for i in range(height):
-        runtime_val = max_runtime - (i / (height - 1)) * max_runtime
-
-        if i == 0:
-            label = format_seconds_human(runtime_val)
-            print(f"{label:>9} |", end="")
-        elif i == height - 1:
-            print(f"{'0s':>9} |", end="")
-        elif i == height // 2:
-            label = format_seconds_human(runtime_val)
-            print(f"{label:>9} |", end="")
-        else:
-            print(f"{'':10} |", end="")
-
-        print("".join(plot[i]))
-
-    print(f"{'':10} +{'-' * width}")
     print(
-        f"{'':12}0{' ' * (width // 2 - 5)}{max_index // 2}"
-        f"{' ' * (width // 2 - 5)}{max_index}"
+        f"\n  Key:  {CYAN}•{RESET} curve point   "
+        f"{CYAN}·{RESET} connector   "
+        f"{YELLOW}╌{RESET} percentile guideline"
     )
-    print(f"{'':12}Job Index")
-
-    print(f"\nSymbols: · = 1 job   • = 2-3 jobs   █ = 4+ jobs")
-    if outliers > 0:
-        print(
-            f"Note: {outliers} job(s) with runtime > "
-            f"{format_seconds_human(p95_runtime)} (95th percentile) not shown"
-        )
     print()
 
 
-def histogram(cluster_id, jobs, percentiles=10, max_width=20, show_fast_jobs=False):
-    if not jobs:
-        print("[WARN] No valid data to plot.")
+# ── Histogram ──────────────────────────────────────────────────────────────────
+
+def histogram(cluster_id, df, percentiles=10, max_width=20, show_fast_jobs=False):
+    """
+    Print histogram where bins are percentile ranges.
+    Bars are red if the bin median runtime is < 10 minutes.
+    Optionally print exact job IDs whose runtime is < 10 minutes.
+    """
+    rt = _get_positive_runtimes(df)
+    if rt is None:
         return
 
-    runtimes = []
-    cluster_ids = []
-    proc_ids = []
-    submit_times = []
-    completion_times = []
-
-    for job in jobs:
-        runtime = safe_float(job.get("RemoteWallClockTime"))
-        if runtime is not None:
-            runtimes.append(runtime)
-            cluster_ids.append(job.get("ClusterId", ""))
-            proc_ids.append(job.get("ProcId", ""))
-
-            qdate = safe_float(job.get("QDate"))
-            if qdate is not None:
-                submit_times.append(qdate)
-
-            comp_date = safe_float(job.get("CompletionDate"))
-            if comp_date is not None:
-                completion_times.append(comp_date)
-
-    if not runtimes:
-        print("[WARN] No valid runtime data to plot.")
-        return
-
-    runtimes = np.array(runtimes)
-    cluster_ids = np.array(cluster_ids)
-    proc_ids = np.array(proc_ids)
-
+    runtimes = rt.values
     percentiles_list = np.linspace(0, 100, percentiles + 1)
-    bin_edges = np.percentile(runtimes, percentiles_list)
+    raw_edges = np.percentile(runtimes, percentiles_list)
+    bin_edges = np.unique(raw_edges)
+
+    if len(bin_edges) < 2:
+        print("[WARN] Not enough unique runtime values to build histogram.")
+        return
+
     counts, _ = np.histogram(runtimes, bins=bin_edges)
-    max_count = counts.max()
+    max_count = counts.max() if len(counts) > 0 else 0
 
-    print(f"\n{'Histogram of Job Runtimes by Percentiles':^80}")
-    print("=" * 80)
-    print(f"ClusterId: {cluster_id}\n")
+    print(f"\n  {'Histogram by Percentile':^80}")
+    print(f"  {'-' * 80}")
+    print()
 
-    if submit_times:
-        print(f"First Submitted : {format_epoch_human_relative(min(submit_times))}")
-    else:
-        print("First Submitted : N/A")
-
-    if completion_times:
-        print(f"Last Completed  : {format_epoch_human_relative(max(completion_times))}")
-    else:
-        print("Last Completed  : N/A")
-
-    print("")
-
-    pct_width = 11
+    pct_width = 15
     label_width = 30
     count_width = 7
-
     RED = "\033[91m"
     RESET = "\033[0m"
 
@@ -189,126 +182,159 @@ def histogram(cluster_id, jobs, percentiles=10, max_width=20, show_fast_jobs=Fal
     print(header)
     print("-" * len(header))
 
-    jobs_under_10_min_median = 0
-    fast_job_ids = []
+    jobs_in_red_bins = 0
 
     for i in range(len(counts)):
         left = bin_edges[i]
         right = bin_edges[i + 1]
 
-        in_bin_mask = (
-            (runtimes >= left) & (runtimes <= right)
+        mask = (
+            (rt >= left) & (rt <= right)
             if i == len(counts) - 1
-            else (runtimes >= left) & (runtimes < right)
+            else (rt >= left) & (rt < right)
         )
 
-        in_bin_times = runtimes[in_bin_mask]
-        in_bin_clusters = cluster_ids[in_bin_mask]
-        in_bin_procs = proc_ids[in_bin_mask]
-
-        median_time = np.median(in_bin_times) if len(in_bin_times) > 0 else 0
+        in_bin = rt[mask]
+        median_time = in_bin.median() if not in_bin.empty else 0
         is_red = median_time < 600
 
-        color = RED if is_red else ""
         if is_red:
-            jobs_under_10_min_median += len(in_bin_times)
-            fast_job_ids.extend(
-                [f"{cid}.{pid}" for cid, pid in zip(in_bin_clusters, in_bin_procs)]
-            )
+            jobs_in_red_bins += len(in_bin)
 
-        left_label = format_seconds_human(left)
-        right_label = format_seconds_human(right)
-        time_range = f"{left_label:>10} - {right_label:>10}".rjust(label_width)
+        color = RED if is_red else ""
+        time_range = (
+            f"{format_seconds_human(left):>10} - {format_seconds_human(right):>10}"
+        ).rjust(label_width)
 
-        pct_start = int(percentiles_list[i])
-        pct_end = int(percentiles_list[i + 1])
-        pct_range = f"{pct_start:02}–{pct_end:02}%".ljust(pct_width)
+        # Because duplicate percentile edges may have been collapsed by np.unique,
+        # compute an approximate percentile label from the actual edge positions.
+        left_pct = int(round(100 * i / len(counts)))
+        right_pct = int(round(100 * (i + 1) / len(counts)))
+        pct_range = f"{left_pct:02}–{right_pct:02}%".ljust(pct_width)
 
-        bar = "█" * int((counts[i] / max_count) * max_width)
-        colored_bar = f"{color}{bar:<{max_width}}{RESET}"
+        bar_len = int((counts[i] / max_count) * max_width) if max_count > 0 else 0
+        bar = "█" * bar_len
 
-        print(f"{pct_range}{time_range} | {colored_bar} {counts[i]:>{count_width}}")
+        print(
+            f"{pct_range}{time_range} | "
+            f"{color}{bar:<{max_width}}{RESET} {counts[i]:>{count_width}}"
+        )
 
     print(f"\n{RED}Note:{RESET} Bars in red represent bins with median runtime < 10 minutes.")
-    print(f"{RED}Info:{RESET} Total number of jobs in such bins: {jobs_under_10_min_median}")
+    print(f"{RED}Info:{RESET} Total number of jobs in such bins: {jobs_in_red_bins}")
 
-    if show_fast_jobs and fast_job_ids:
-        print(f"\nList of Job IDs with median runtime < 10 minutes:")
-        print(", ".join(fast_job_ids))
+    if show_fast_jobs:
+        if "ClusterId" in df.columns and "ProcId" in df.columns:
+            fast_mask = df["RemoteWallClockTime"].fillna(-1) < 600
+            fast_jobs = df.loc[fast_mask, ["ClusterId", "ProcId"]].dropna()
+
+            fast_job_ids = [
+                f"{int(r)}.{int(p)}" if pd.notna(r) and pd.notna(p) else f"{r}.{p}"
+                for r, p in zip(fast_jobs["ClusterId"], fast_jobs["ProcId"])
+            ]
+
+            if fast_job_ids:
+                print(f"\nJob IDs with runtime < 10 minutes:")
+                print(", ".join(fast_job_ids))
+            else:
+                print(f"\nNo jobs with runtime < 10 minutes.")
+        else:
+            print("\n[WARN] Cannot print fast job IDs: missing ClusterId or ProcId column.")
 
 
-def load_data_for_cluster(cluster_id):
-    return load_csv_for_cluster(cluster_id)
-
+# ── Data-only interface for summarize.py ──────────────────────────────────────
 
 def get_histogram_data(cluster_id):
     """
-    Return runtime analysis data as a dictionary for use by cluster_health.py.
-    Does not print anything, just returns computed metrics.
+    Return runtime analysis metrics as a dict for use by summarize.py.
+    Does not print anything.
     """
     jobs = load_csv_for_cluster(cluster_id, exit_on_missing=False)
     if not jobs:
         return None
 
-    runtimes = []
-    submit_times = []
-    completion_times = []
+    df = pd.DataFrame(jobs)
+    for col in ["RemoteWallClockTime", "QDate", "CompletionDate"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    for job in jobs:
-        runtime = safe_float(job.get("RemoteWallClockTime"))
-        if runtime is not None and runtime > 0:
-            runtimes.append(runtime)
-
-        qdate = safe_float(job.get("QDate"))
-        if qdate is not None:
-            submit_times.append(qdate)
-
-        comp_date = safe_float(job.get("CompletionDate"))
-        if comp_date is not None:
-            completion_times.append(comp_date)
-
-    if not runtimes:
+    if "RemoteWallClockTime" not in df.columns:
         return None
 
-    runtimes = np.array(runtimes)
+    rt = df["RemoteWallClockTime"].dropna()
+    rt = rt[rt > 0]
+    if rt.empty:
+        return None
 
-    mean_runtime = np.mean(runtimes)
-    median_runtime = np.median(runtimes)
-    std_runtime = np.std(runtimes)
-    cv = (std_runtime / mean_runtime) if mean_runtime > 0 else 0
-    fast_jobs = np.sum(runtimes < 600)
-    fast_jobs_pct = (fast_jobs / len(runtimes)) * 100
+    runtimes = rt.values
     p95 = np.percentile(runtimes, 95)
-    long_jobs = np.sum(runtimes > p95)
-    job_indices = np.arange(len(runtimes))
-    correlation = np.corrcoef(job_indices, runtimes)[0, 1]
+
+    qdate_series = df["QDate"].dropna() if "QDate" in df.columns else pd.Series(dtype=float)
+    completion_series = (
+        df["CompletionDate"].dropna()
+        if "CompletionDate" in df.columns else pd.Series(dtype=float)
+    )
 
     return {
         "total_runtime_jobs": len(runtimes),
-        "mean_runtime": mean_runtime,
-        "median_runtime": median_runtime,
-        "std_runtime": std_runtime,
-        "cv": cv,
-        "fast_jobs": fast_jobs,
-        "fast_jobs_pct": fast_jobs_pct,
-        "long_jobs": long_jobs,
+        "mean_runtime": rt.mean(),
+        "median_runtime": rt.median(),
+        "std_runtime": rt.std(),
+        "cv": rt.std() / rt.mean() if rt.mean() > 0 else 0,
+        "fast_jobs": int((runtimes < 600).sum()),
+        "fast_jobs_pct": float((runtimes < 600).mean() * 100),
+        "long_jobs": int((runtimes > p95).sum()),
         "p95_runtime": p95,
-        "min_runtime": np.min(runtimes),
-        "max_runtime": np.max(runtimes),
-        "correlation": correlation,
-        "first_submitted": min(submit_times) if submit_times else None,
-        "last_completed": max(completion_times) if completion_times else None,
+        "min_runtime": rt.min(),
+        "max_runtime": rt.max(),
+        "first_submitted": qdate_series.min() if not qdate_series.empty else None,
+        "last_completed": completion_series.max() if not completion_series.empty else None,
     }
 
 
+# ── Entry point ────────────────────────────────────────────────────────────────
+
 def run(args):
     """Entry point called by main.py."""
-    jobs = load_data_for_cluster(args.cluster_id)
-    scatter_plot_job_index_vs_runtime(args.cluster_id, jobs, height=15, width=60)
-    histogram(
-        args.cluster_id,
-        jobs,
-        percentiles=args.percentiles,
-        max_width=20,
-        show_fast_jobs=args.print_list,
+    df = load_data_for_cluster(args.cluster_id)
+
+    rt = _get_positive_runtimes(df)
+    n = len(rt) if rt is not None else 0
+
+    submit_times = df["QDate"].dropna() if "QDate" in df.columns else pd.Series(dtype=float)
+    completion_times = (
+        df["CompletionDate"].dropna()
+        if "CompletionDate" in df.columns else pd.Series(dtype=float)
     )
+
+    first_sub = (
+        format_epoch_human_relative(submit_times.min())
+        if not submit_times.empty else "N/A"
+    )
+    last_comp = (
+        format_epoch_human_relative(completion_times.max())
+        if not completion_times.empty else "N/A"
+    )
+
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+    print(f"\n{BOLD}{'Runtime Analysis':^80}{RESET}")
+    print("=" * 80)
+    print(
+        f"  Cluster : {args.cluster_id}   |   Jobs: {n}   |   "
+        f"Submitted: {first_sub}   |   Completed: {last_comp}"
+    )
+    print("=" * 80)
+
+    show = getattr(args, "show", "both")
+    if show in ("cdf", "both"):
+        cumulative_distribution(args.cluster_id, df, height=15, width=60)
+    if show in ("histogram", "both"):
+        histogram(
+            args.cluster_id,
+            df,
+            percentiles=args.percentiles,
+            max_width=20,
+            show_fast_jobs=args.print_list,
+        )

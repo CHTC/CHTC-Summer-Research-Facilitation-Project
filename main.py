@@ -124,22 +124,22 @@ def build_parser():
     # ------------------------------------------------------------------ #
     histogram_parser = subparsers.add_parser(
         "histogram",
-        help="Runtime distribution histogram and scatter plot",
+        help="Runtime distribution histogram and CDF",
         description=textwrap.dedent(
             """
             Plot job runtimes from cluster CSV data.
 
-            Produces:
-              • A scatter plot of job index vs. runtime (detects trends)
-              • A percentile-binned ASCII histogram of runtimes
-              • Red highlighting for bins with median runtime < 10 minutes
+            Produces (by default, both):
+              • A CDF line plot of runtimes
+              • A percentile-binned histogram of runtimes
 
             Data files must be in: cluster_data/cluster_{id}_jobs.csv
 
             Examples:
-              python main.py histogram 12345
-              python main.py histogram 12345 --print-list
-              python main.py histogram 12345 --percentiles 20
+              python main.py runtimes 12345
+              python main.py runtimes 12345 --show cdf
+              python main.py runtimes 12345 --show histogram
+              python main.py runtimes 12345 --print-list
             """
         ),
         formatter_class=argparse.RawTextHelpFormatter,
@@ -150,10 +150,16 @@ def build_parser():
         help="HTCondor cluster ID to analyse.",
     )
     histogram_parser.add_argument(
+        "--show",
+        choices=["cdf", "histogram", "both"],
+        default="both",
+        help="Which graph to display: cdf, histogram, or both. (default: both)",
+    )
+    histogram_parser.add_argument(
         "--print-list",
         action="store_true",
         default=False,
-        help="Print job IDs with median runtime < 10 minutes. (default: off)",
+        help="Print job IDs with runtime < 10 minutes. (default: off)",
     )
     histogram_parser.add_argument(
         "--percentiles",
@@ -167,7 +173,7 @@ def build_parser():
     # analytics                                                            #
     # ------------------------------------------------------------------ #
     analytics_parser = subparsers.add_parser(
-        "analytics",
+        "resources",
         help="Resource utilisation report (CPU / memory / disk)",
         description=textwrap.dedent(
             """
@@ -179,10 +185,16 @@ def build_parser():
               • Usage distribution histograms
               • Optimisation recommendations based on P95 patterns
 
+            Savings are reported in GiB-hours, which captures both how much
+            is wasted per job and how long jobs run. A figure like 1,200 GiB-hours
+            is broken down inline as:
+              (≈ 30.0 GiB/job × 40 jobs × 1.0 hr avg runtime)
+            so you can sanity-check each factor independently.
+
             Data files must be in: cluster_data/cluster_{id}_jobs.csv
 
             Example:
-              python main.py analytics 12345
+              python main.py resources 12345
             """
         ),
         formatter_class=argparse.RawTextHelpFormatter,
