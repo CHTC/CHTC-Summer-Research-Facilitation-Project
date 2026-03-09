@@ -1,8 +1,6 @@
 import sys
 import os
 import csv
-import argparse
-import textwrap
 import numpy as np
 from datetime import datetime, timedelta
 
@@ -11,56 +9,6 @@ from datetime import datetime, timedelta
 This program takes data from the cluster_data folder and gives an ASCII histogram
 of the runtimes for a cluster. The runtimes are grouped by percentile range.
 """
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        prog="condor_histogram",
-        description=textwrap.dedent(
-            """
-            HTCondor Cluster Runtime Histogram
-
-            Reads job execution data from CSV files and produces:
-              • A scatter plot of job index vs. runtime (detects trends)
-              • A percentile-binned ASCII histogram of job runtimes
-              • Flags jobs with median runtime < 10 minutes (in red)
-
-            Data files must be located in: cluster_data/cluster_{id}_jobs.csv
-
-            Example usage:
-              python histogram.py 12345
-              python histogram.py 12345 --print-list
-              python histogram.py 12345 --percentiles 20
-            """
-        ),
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
-
-    parser.add_argument(
-        "-cluster_id",
-        "--cluster_id",
-        required=True,
-        metavar="ID",
-        help="HTCondor cluster ID to analyze (required).",
-    )
-
-    parser.add_argument(
-        "--print-list",
-        action="store_true",
-        default=False,
-        help="Print the list of job IDs with median runtime < 10 minutes.\n"
-             "Useful for identifying specific short-running jobs. (default: off)",
-    )
-
-    parser.add_argument(
-        "--percentiles",
-        type=int,
-        default=10,
-        metavar="N",
-        help="Number of percentile bins for the histogram. (default: 10)",
-    )
-
-    return parser.parse_args()
 
 
 def format_seconds_human(seconds):
@@ -431,7 +379,7 @@ def get_histogram_data(cluster_id):
 
 
 def run(args):
-    """Entry point used by both standalone and main.py subcommand."""
+    """Entry point called by main.py."""
     jobs = load_data_for_cluster(args.cluster_id)
     scatter_plot_job_index_vs_runtime(args.cluster_id, jobs, height=15, width=60)
     histogram(
@@ -441,8 +389,3 @@ def run(args):
         max_width=20,
         show_fast_jobs=args.print_list,
     )
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    run(args)

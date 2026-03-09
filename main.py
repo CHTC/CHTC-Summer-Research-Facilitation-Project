@@ -8,8 +8,8 @@ import os
 Unified CLI entry point for HTCondor cluster analysis tools.
 
 Usage:
-    python main.py --cluster_id <ID>                  # defaults to summarize
-    python main.py <subcommand> --cluster_id <ID>
+    python main.py <cluster_id>                       # defaults to summarize
+    python main.py <subcommand> <cluster_id>
 
 Subcommands:
     dashboard   ASCII job-status bar chart
@@ -71,30 +71,20 @@ def build_parser():
             =========================
             A suite of tools for diagnosing and analysing HTCondor job clusters.
 
-            With no subcommand, runs 'summarize' by default:
-              python main.py --cluster_id 12345
+            Usage:
+              python main.py <subcommand> <cluster_id>
 
-            Or pick a specific subcommand:
-              python main.py dashboard  --cluster_id 12345
-              python main.py histogram  --cluster_id 12345
-              python main.py analytics  --cluster_id 12345
-              python main.py hold       --cluster_id 12345
-              python main.py summarize  --cluster_id 12345
+            Subcommands:
+              python main.py dashboard  12345
+              python main.py histogram  12345
+              python main.py analytics  12345
+              python main.py hold       12345
+              python main.py summarize  12345
 
             Run 'python main.py <subcommand> --help' for full options on each tool.
             """
         ),
         formatter_class=argparse.RawTextHelpFormatter,
-    )
-
-    # Top-level --cluster_id so `python main.py --cluster_id 12345`
-    # works without specifying a subcommand (defaults to summarize).
-    parser.add_argument(
-        "-cluster_id",
-        "--cluster_id",
-        metavar="ID",
-        default=None,
-        help="HTCondor cluster ID. Runs summarize by default if no subcommand given.",
     )
 
     subparsers = parser.add_subparsers(
@@ -118,17 +108,15 @@ def build_parser():
             Suspended.
 
             Example:
-              python main.py dashboard --cluster_id 12345
+              python main.py dashboard 12345
             """
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     dashboard_parser.add_argument(
-        "-cluster_id",
-        "--cluster_id",
-        required=True,
-        metavar="ID",
-        help="HTCondor cluster ID to display (required).",
+        "cluster_id",
+        metavar="CLUSTER_ID",
+        help="HTCondor cluster ID to display.",
     )
 
     # ------------------------------------------------------------------ #
@@ -149,19 +137,17 @@ def build_parser():
             Data files must be in: cluster_data/cluster_{id}_jobs.csv
 
             Examples:
-              python main.py histogram --cluster_id 12345
-              python main.py histogram --cluster_id 12345 --print-list
-              python main.py histogram --cluster_id 12345 --percentiles 20
+              python main.py histogram 12345
+              python main.py histogram 12345 --print-list
+              python main.py histogram 12345 --percentiles 20
             """
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     histogram_parser.add_argument(
-        "-cluster_id",
-        "--cluster_id",
-        required=True,
-        metavar="ID",
-        help="HTCondor cluster ID to analyse (required).",
+        "cluster_id",
+        metavar="CLUSTER_ID",
+        help="HTCondor cluster ID to analyse.",
     )
     histogram_parser.add_argument(
         "--print-list",
@@ -196,17 +182,15 @@ def build_parser():
             Data files must be in: cluster_data/cluster_{id}_jobs.csv
 
             Example:
-              python main.py analytics --cluster_id 12345
+              python main.py analytics 12345
             """
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     analytics_parser.add_argument(
-        "-cluster_id",
-        "--cluster_id",
-        required=True,
-        metavar="ID",
-        help="HTCondor cluster ID to analyse (required).",
+        "cluster_id",
+        metavar="CLUSTER_ID",
+        help="HTCondor cluster ID to analyse.",
     )
 
     # ------------------------------------------------------------------ #
@@ -225,20 +209,18 @@ def build_parser():
             and a human-readable legend of hold codes.
 
             Examples:
-              python main.py hold --cluster_id 12345
-              python main.py hold --cluster_id 12345 --min-count 10 --sort-by time
-              python main.py hold --cluster_id 12345 --top 5 --code 34
-              python main.py hold --cluster_id 12345 --export-jobs held.txt
+              python main.py hold 12345
+              python main.py hold 12345 --min-count 10 --sort-by time
+              python main.py hold 12345 --top 5 --code 34
+              python main.py hold 12345 --export-jobs held.txt
             """
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     hold_parser.add_argument(
-        "-cluster_id",
-        "--cluster_id",
-        required=True,
-        metavar="ID",
-        help="HTCondor cluster ID to analyse (required).",
+        "cluster_id",
+        metavar="CLUSTER_ID",
+        help="HTCondor cluster ID to analyse.",
     )
 
     # Filtering
@@ -313,18 +295,16 @@ def build_parser():
             recommended next steps.
 
             This is the default subcommand — the following are equivalent:
-              python main.py --cluster_id 12345
-              python main.py summarize --cluster_id 12345
+              python main.py 12345
+              python main.py summarize 12345
             """
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     summarize_parser.add_argument(
-        "-cluster_id",
-        "--cluster_id",
-        required=True,
-        metavar="ID",
-        help="HTCondor cluster ID to summarize (required).",
+        "cluster_id",
+        metavar="CLUSTER_ID",
+        help="HTCondor cluster ID to summarize.",
     )
 
     return parser
@@ -334,14 +314,10 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    # Default to summarize when no subcommand is given.
-    # `python main.py --cluster_id 12345` is equivalent to
-    # `python main.py summarize --cluster_id 12345`
+    # Require a subcommand — print help if none given.
     if args.subcommand is None:
-        if args.cluster_id is None:
-            parser.print_help()
-            sys.exit(1)
-        args.subcommand = "summarize"
+        parser.print_help()
+        sys.exit(1)
 
     # Lazy imports so that missing optional deps (e.g. htcondor2) only
     # surface when you actually invoke the relevant subcommand.

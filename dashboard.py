@@ -1,46 +1,11 @@
 import sys
 import math
-import argparse
-import textwrap
 import htcondor2
 
 
 """
 This program provides a pretty ASCII dashboard for the status of jobs in a cluster
 """
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        prog="condor_dashboard",
-        description=textwrap.dedent(
-            """
-            HTCondor Cluster Status Dashboard
-
-            Displays a real-time ASCII bar chart of job statuses for a given cluster,
-            combining both active queue jobs and historical completed jobs.
-
-            Job statuses shown:
-              Idle, Running, Removing, Completed, Held,
-              Transferring Output, Suspended
-
-            Example usage:
-              python dashboard.py 12345
-              python dashboard.py --cluster_id 67890
-            """
-        ),
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
-
-    parser.add_argument(
-        "-cluster_id",
-        "--cluster_id",
-        required=True,
-        metavar="ID",
-        help="HTCondor cluster ID to display status for (required).",
-    )
-
-    return parser.parse_args()
 
 
 # get data from the schedd
@@ -146,7 +111,7 @@ def get_dashboard_data(clusterId):
 
 
 def run(args):
-    """Entry point used by both standalone and main.py subcommand."""
+    """Entry point called by main.py."""
     job_states = [
         "Idle", "Running", "Removing", "Completed",
         "Held", "Transferring Output", "Suspended",
@@ -154,8 +119,3 @@ def run(args):
     counts = fetch_counts(args.cluster_id, job_states)
     print(f"\nCluster {args.cluster_id} Status Dashboard\n")
     draw_bars(counts, job_states)
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    run(args)

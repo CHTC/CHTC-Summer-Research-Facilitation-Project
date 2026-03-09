@@ -1,7 +1,4 @@
-import os
 import sys
-import argparse
-import textwrap
 from datetime import datetime
 from tabulate import tabulate
 
@@ -37,36 +34,6 @@ class Colors:
     CYAN = "\033[96m"
     BOLD = "\033[1m"
     RESET = "\033[0m"
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        prog="condor_summarize",
-        description=textwrap.dedent(
-            """
-            HTCondor Cluster Health Summary
-
-            Aggregates data from all analysis tools (analytics, dashboard,
-            histogram, hold_bucket) and prints a single concise health report
-            with colour-coded status indicators and recommended next steps.
-
-            Example usage:
-              python summarize.py 12345
-              python summarize.py --cluster_id 67890
-            """
-        ),
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
-
-    parser.add_argument(
-        "-cluster_id",
-        "--cluster_id",
-        required=True,
-        metavar="ID",
-        help="HTCondor cluster ID to summarize (required).",
-    )
-
-    return parser.parse_args()
 
 
 def color_text(text, color):
@@ -114,7 +81,7 @@ def generate_health_report(cluster_id, efficiency_data, status_data, runtime_dat
     findings.append({
         "aspect": "Memory Efficiency", "status": mem_status,
         "value": f"{mem_eff:.1f}%", "jobs": mem_jobs, "reason": reason,
-        "tool": f"python analytics.py {cluster_id}",
+        "tool": f"python main.py analytics {cluster_id}",
     })
 
     disk_eff = efficiency_data.get("disk_efficiency", 0)
@@ -129,7 +96,7 @@ def generate_health_report(cluster_id, efficiency_data, status_data, runtime_dat
     findings.append({
         "aspect": "Disk Efficiency", "status": disk_status,
         "value": f"{disk_eff:.1f}%", "jobs": disk_jobs, "reason": reason,
-        "tool": f"python analytics.py {cluster_id}",
+        "tool": f"python main.py analytics {cluster_id}",
     })
 
     cpu_eff = efficiency_data.get("cpu_efficiency", 0)
@@ -144,7 +111,7 @@ def generate_health_report(cluster_id, efficiency_data, status_data, runtime_dat
     findings.append({
         "aspect": "CPU Efficiency", "status": cpu_status,
         "value": f"{cpu_eff:.1f}%", "jobs": cpu_jobs, "reason": reason,
-        "tool": f"python analytics.py {cluster_id}",
+        "tool": f"python main.py analytics {cluster_id}",
     })
 
     held_count = held_data.get("held_count", 0)
@@ -160,7 +127,7 @@ def generate_health_report(cluster_id, efficiency_data, status_data, runtime_dat
         findings.append({
             "aspect": "Held Jobs", "status": held_status,
             "value": str(held_count), "jobs": held_count, "reason": reason,
-            "tool": f"python hold_bucket.py {cluster_id}",
+            "tool": f"python main.py hold {cluster_id}",
         })
     else:
         findings.append({
@@ -182,7 +149,7 @@ def generate_health_report(cluster_id, efficiency_data, status_data, runtime_dat
         findings.append({
             "aspect": "Fast Jobs", "status": fast_status,
             "value": f"{fast_pct:.1f}%", "jobs": fast_jobs, "reason": reason,
-            "tool": f"python histogram.py {cluster_id}",
+            "tool": f"python main.py histogram {cluster_id}",
         })
     else:
         findings.append({
@@ -207,7 +174,7 @@ def generate_health_report(cluster_id, efficiency_data, status_data, runtime_dat
         findings.append({
             "aspect": "Runtime Consistency", "status": cv_status,
             "value": f"CV={cv:.2f}", "jobs": total_runtime_jobs, "reason": reason,
-            "tool": f"python histogram.py {cluster_id}",
+            "tool": f"python main.py histogram {cluster_id}",
         })
     else:
         findings.append({
@@ -224,7 +191,7 @@ def generate_health_report(cluster_id, efficiency_data, status_data, runtime_dat
             "aspect": "Job Status", "status": "INFO",
             "value": str(total_jobs), "jobs": total_jobs,
             "reason": f"{completed} completed, {running} running, {idle} idle",
-            "tool": f"python dashboard.py {cluster_id}",
+            "tool": f"python main.py dashboard {cluster_id}",
         })
 
     return findings
@@ -292,13 +259,13 @@ def print_health_summary(cluster_id, findings):
 
 
 def run(args):
-    """Entry point used by both standalone and main.py subcommand."""
+    """Entry point called by main.py."""
     cluster_id = args.cluster_id
 
     efficiency_data = get_analytics_data(cluster_id)
     if not efficiency_data:
         print(f"ERROR: Could not load analytics data.")
-        print(f"Please run: python fetch_cluster_data.py {cluster_id}")
+        print(f"Please run: python main.py fetch {cluster_id}")
         sys.exit(1)
 
     status_data = get_dashboard_data(cluster_id)
@@ -324,8 +291,3 @@ def run(args):
         cluster_id, efficiency_data, status_data, runtime_data, held_data
     )
     print_health_summary(cluster_id, findings)
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    run(args)
