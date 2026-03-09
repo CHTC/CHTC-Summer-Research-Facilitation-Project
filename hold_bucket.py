@@ -4,6 +4,7 @@ from difflib import SequenceMatcher
 from tabulate import tabulate
 import datetime
 import time as time_module
+from utils import format_seconds_human
 
 
 """
@@ -78,20 +79,6 @@ def bucket_reasons_with_data(reason_data, threshold=0.7):
     return buckets
 
 
-def format_duration(seconds):
-    """Format duration in a human-readable way"""
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    elif seconds < 3600:
-        minutes = seconds / 60
-        return f"{minutes:.1f}m"
-    elif seconds < 86400:
-        hours = seconds / 3600
-        return f"{hours:.1f}h"
-    else:
-        days = seconds / 86400
-        return f"{days:.1f}d"
-
 
 def calculate_avg_hold_time(bucket):
     """Calculate average time jobs have been held in a bucket"""
@@ -107,7 +94,7 @@ def calculate_avg_hold_time(bucket):
         return None, "N/A"
     
     avg_seconds = sum(hold_durations) / len(hold_durations)
-    return avg_seconds, format_duration(avg_seconds)
+    return avg_seconds, format_seconds_human(avg_seconds)
 
 
 """ 
@@ -177,7 +164,7 @@ def print_time_analysis(reasons_by_code):
     
     # Calculate overall average hold time
     avg_hold_duration = (current_time - sum(all_times) / len(all_times))
-    print(f"  Avg hold:   {format_duration(avg_hold_duration)}")
+    print(f"  Avg hold:   {format_seconds_human(avg_hold_duration)}")
     
     print()
 
@@ -370,7 +357,6 @@ def get_hold_bucket_data(cluster_id, threshold=0.7):
         
         time_stats = {}
         if all_times:
-            import time as time_module
             current_time = time_module.time()
             earliest = min(all_times)
             latest = max(all_times)

@@ -58,7 +58,15 @@ def fetch_cluster_jobs(cluster_id, output_dir="cluster_data"):
 
     Returns:
         tuple: (filepath, job_count) - path to created CSV and number of jobs fetched
+
+    Raises:
+        ValueError: If cluster_id cannot be interpreted as an integer.
     """
+    try:
+        cluster_id = int(cluster_id)
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid cluster ID {cluster_id!r}: must be an integer.")
+
     schedd = htcondor2.Schedd()
 
     os.makedirs(output_dir, exist_ok=True)
@@ -187,7 +195,15 @@ def validate_cluster_exists(cluster_id):
 
     Returns:
         bool: True if cluster has jobs, False otherwise
+
+    Raises:
+        ValueError: If cluster_id cannot be interpreted as an integer.
     """
+    try:
+        cluster_id = int(cluster_id)
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid cluster ID {cluster_id!r}: must be an integer.")
+
     schedd = htcondor2.Schedd()
 
     try:

@@ -1,10 +1,8 @@
 import os
-import sys
-import csv
 import statistics
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import timedelta
-from utils import safe_float
+from utils import safe_float, load_csv_for_cluster
 
 
 """
@@ -134,7 +132,9 @@ def print_recommendations(mem_req, mem_used, disk_req, disk_used, cpu_req, cpu_u
             print(f"\n📊 Memory:")
             print(f"  Current Request     : {median_mem_req:.1f} GiB")
             print(f"  Recommended         : {recommended_mem:.1f} GiB (P95 + 10% buffer)")
+            waste_per_job = median_mem_req - recommended_mem
             print(f"  Potential Savings   : {savings:.1f} GiB-hours")
+            print(f"                        (≈ {waste_per_job:.1f} GiB/job × {len(mem_used)} jobs × {avg_runtime_hours:.1f} hr avg runtime)")
             print(f"  Jobs Affected       : {len(mem_used)}")
     
     if disk_req and disk_used:
@@ -147,7 +147,9 @@ def print_recommendations(mem_req, mem_used, disk_req, disk_used, cpu_req, cpu_u
             print(f"\n💾 Disk:")
             print(f"  Current Request     : {median_disk_req:.1f} GiB")
             print(f"  Recommended         : {recommended_disk:.1f} GiB (P95 + 20% buffer)")
+            waste_per_job = median_disk_req - recommended_disk
             print(f"  Potential Savings   : {savings:.1f} GiB-hours")
+            print(f"                        (≈ {waste_per_job:.1f} GiB/job × {len(disk_used)} jobs × {avg_runtime_hours:.1f} hr avg runtime)")
             print(f"  Jobs Affected       : {len(disk_used)}")
     
     if cpu_req and cpu_used_pct:
@@ -167,16 +169,7 @@ def print_recommendations(mem_req, mem_used, disk_req, disk_used, cpu_req, cpu_u
 
 # prints the total report
 def summarize(cluster_id):
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(script_dir, "cluster_data")
-    filepath = os.path.join(data_dir, f"cluster_{cluster_id}_jobs.csv")
-
-    if not os.path.exists(filepath):
-        print(f"Cluster Data not found, please make sure you have the correct .csv, filepath and the correct cluster id")
-        sys.exit(1)
-
-    with open(filepath, newline='', encoding='utf-8') as f:
-        jobs = list(csv.DictReader(f))
+    jobs = load_csv_for_cluster(cluster_id)
 
     mem_requested, mem_used = [], []
     disk_requested, disk_used = [], []
@@ -340,15 +333,9 @@ def get_analytics_data(cluster_id):
     Returns:
         dict: Dictionary containing all analytics metrics
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(script_dir, "cluster_data")
-    filepath = os.path.join(data_dir, f"cluster_{cluster_id}_jobs.csv")
-
-    if not os.path.exists(filepath):
+    jobs = load_csv_for_cluster(cluster_id, exit_on_missing=False)
+    if jobs is None:
         return None
-
-    with open(filepath, newline='', encoding='utf-8') as f:
-        jobs = list(csv.DictReader(f))
 
     mem_requested, mem_used = [], []
     disk_requested, disk_used = [], []

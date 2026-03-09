@@ -1,181 +1,183 @@
-# CHTC Summer Research Facilitation Project
+# HTCondor Cluster Analytics Suite
 
-**Fellow**: Kashika Mahajan  
-**Mentors**: Andrew Owen, Ian Ross  
-**Fellowship Dates**: May 19 – August 8, 2025
+A command-line toolkit for diagnosing and profiling HTCondor job clusters. Given a cluster ID, the suite fetches job data from the HTCondor schedd and produces reports on job status, runtime distribution, resource utilisation, and held-job analysis.
 
-Work on this project is continuing Fall 2025 as internship.
+---
 
-________
+## File Overview
 
+| File | Role |
+|---|---|
+| `main.py` | Unified CLI entry point for all analysis subcommands |
+| `fetch_cluster_data.py` | Standalone script that fetches cluster data from HTCondor and saves it to CSV |
+| `analytics.py` | Resource utilisation report (CPU, memory, disk efficiency and recommendations) |
+| `dashboard.py` | ASCII bar chart of job statuses |
+| `histogram.py` | Runtime distribution histogram and scatter plot |
+| `hold_bucket.py` | Held-job classifier and bucketer |
+| `summarize.py` | Aggregated cluster health report (pulls from all other tools) |
+| `utils.py` | Shared utilities (`safe_float`, `load_csv_for_cluster`, time formatters) |
 
-## 📚 Background
+---
 
-Researchers using HTCondor often struggle to quickly understand how their computational workloads (clusters of jobs) are performing. Current interfaces expose too much raw data, making it difficult, especially for less experienced users—to diagnose issues like  jobs on hold, poor resource utilization, or unexpected failures.
+## Quickstart
 
-This project aimed to build tools that simplify job monitoring, flag issues, and offer meaningful insights into workload behavior using accessible metrics and clear visual feedback.
+```bash
+# Step 1 — fetch and cache job data (only needed once per cluster)
+python fetch_cluster_data.py 12345
 
-________
-
-
-## 📁 Repository Structure
-
-  - hold_bucket.py # Diagnoses held jobs and groups by hold reasons
-  - histogram.py   # Plots job runtime distribution using ASCII histograms
-  - analytics.py   # Summarizes requested vs actual CPU, memory, disk
-  - dashboard.py   # Prints status distribution of jobs in a cluster
-  - README.md # This file
-
-________
-
-
-## ⚙️ Setup and Installation
-1. Clone this repository:
-2. Install all the packages in the requirements.txt
-3. You must have access to:
-  - HTCondor Python bindings
-  - Elasticsearch (if querying historical job data)
-  ⚠️ Note: Some tools require authentication to the CHTC Elasticsearch instance, which is currently not available to general users.
-
-________
-
-## 🚀 Usage Instructions
-
-Each tool is meant to be run as a standalone Python script with a cluster ID as input.
-
-Example command: `python dashboard.py <ClusterId>`
-
-________
-
-
-## Features and Deliverables
-1. Cluster Status Dashboard
-    Purpose: Quickly visualize job statuses (Idle, Running, Held, Completed)
-    Features:
-      - Combines data from both queue and history
-      - Highlights abnormal patterns using ASCII charts
-  
-### Example: Cluster Status Dashboard Output
-```
-Cluster 12345 Status Dashboard
-
-             Status | Bar                                                | Count |      %
------------------------------------------------------------------------------------------
-               Idle | █████████████                                      |  8686 |  27.0%
-            Running |                                                    |   433 |   1.3%
-           Removing |                                                    |     0 |   0.0%
-          Completed |                                                    |     0 |   0.0%
-               Held | ███████████████████████████████████                | 23067 |  71.7%
-Transferring Output |                                                    |     0 |   0.0%
-          Suspended |                                                    |     0 |   0.0%
-
+# Step 2 — run any analysis
+python main.py summarize  12345   # aggregated health report (good starting point)
+python main.py analytics  12345   # resource utilisation deep-dive
+python main.py histogram  12345   # runtime distribution
+python main.py dashboard  12345   # job status bar chart
+python main.py hold       12345   # held job analysis
 ```
 
-  
-3. Cluster Runtime Histogram
-    Purpose: Understand runtime variance across jobs
-    Features:
-      - Binned by percentiles
-      - Flags jobs with runtime < 10 min
-      - Can print list of affected job IDs
-  
- 
-### Example: Cluster Runtime Histogram Output
+> **Note:** If you run a `main.py` subcommand and no cached CSV exists for that cluster, the data will be fetched automatically before the analysis runs. `fetch_cluster_data.py` only needs to be run explicitly if you want to pre-fetch, refresh stale data, or save to a custom output directory.
 
-<img width="500" height="300" alt="image" src="https://github.com/user-attachments/assets/d6102c28-8a1b-4d7e-b87b-2b0d6be26019" />
+---
 
+## Subcommands
 
+### `summarize` — Cluster Health Report
 
-4. Hold Classifier
-    Purpose: Explain why jobs were held
-    Features:
-      - Clusters jobs by HoldReasonCode + HoldReasonSubCode
-      - Displays percentage and example reasons
-      - Includes human-readable legend of hold codes
-  
-### Example: Hold Classifier Output
+Aggregates data from all other tools into a single colour-coded status table with recommended next steps. Good first stop for any cluster.
 
-``` 
-
-Cluster ID: 12345
-Held Jobs in Cluster: 109
-+---------------------+-----------+--------------------------+---------------------------------------------------------+
-| Hold Reason Label   |   SubCode | % of Held Jobs (Count)   | Example Reason                                          |
-+=====================+===========+==========================+=========================================================+
-| StartdHeldJob       |         0 | 95.4% (104)              | Job failed to complete in 72 hrs                        |
-+---------------------+-----------+--------------------------+---------------------------------------------------------+
-| JobExecuteExceeded  |         0 | 4.6% (5)                 | The job exceeded allowed execute duration of 3+00:00:00 |
-+---------------------+-----------+--------------------------+---------------------------------------------------------+
-
-Legend:
-╒════════╤════════════════════╤═══════════════════════════════════════════════════════════════════════════╕
-│   Code │ Label              │ Reason                                                                    │
-╞════════╪════════════════════╪═══════════════════════════════════════════════════════════════════════════╡
-│     21 │ StartdHeldJob      │ The job was put on hold because WANT_HOLD in the machine policy was true. │
-├────────┼────────────────────┼───────────────────────────────────────────────────────────────────────────┤
-│     47 │ JobExecuteExceeded │ The job's allowed execution time was exceeded.                            │
-╘════════╧════════════════════╧═══════════════════════════════════════════════════════════════════════════╛
-
+```bash
+python main.py summarize 12345
 ```
 
+Checks: memory/disk/CPU efficiency, held job rate, fast job rate, runtime consistency.
 
-5. Resource Utilization Report
-    Purpose: Compare requested vs actual usage
-    Features:
-      - Summarizes CPU, memory, and disk usage
-      - Adds flags for under (<15%) or over (>80%) utilization
-      - Includes bar chart and percentiles
+---
 
+### `analytics` — Resource Utilisation Report
 
-### Example: Resource Utilization ReportOutput  
-```
-================================================================================
-                       HTCondor Cluster Resource Summary                        
-================================================================================
-          Cluster ID: 12345
-           Job Count: 748
-         Avg Runtime: 0:56:52
+Analyses CPU, memory, and disk request vs. actual usage across all jobs.
 
-                              Requested Resources                               
-================================================================================
-Memory (GiB)   :
-                 0.49       GiB    1 job(s)
-                 12.0       GiB    1 job(s)
-                 50.0       GiB    746 job(s)
-
-Disk (GiB)     :
-                 0.1        GiB    1 job(s)
-                 10.0       GiB    1 job(s)
-                 30.0       GiB    746 job(s)
-
-CPUs           :
-                 1                 2 job(s)
-                 8                 746 job(s)
-
-GPUs           : No data
-                              Number Summary Table                              
-================================================================================
-Resource (units)         :    Min      Q1   Median      Q3     Max   StdDev
---------------------------------------------------------------------------------
-Memory Used (GiB)        :    0.1     1.2      6.1    14.2    47.4     10.4
-Disk Used (GiB)          :    0.0     0.8      0.8     0.8     1.1      0.1
-CPU Usage (%)            :  0.0%%  32.1%%   35.8%%  44.8%%  85.5%%   11.0%%
-
-                              Overall Utilization                               
-================================================================================
-  Memory usage      [██████                                            ] 12.2%
-  Disk usage        [█                                                 ] 2.6%
-  CPU usage         [█████████████████                                 ] 35.8%
-
-                                Efficiency Notes                                
-================================================================================
-  ⚠️  Memory usage is 12.2%
-  ⚠️  Disk usage is 2.6%
-  ✅ CPU usage is 35.8%
-
-                                 End of Summary                                 
-================================================================================
-
+```bash
+python main.py analytics 12345
 ```
 
+Produces:
+- Requested resource breakdown (counts per request level)
+- Five-number summary (min, Q1, median, Q3, max, stddev) of actual usage
+- Overall utilisation bar chart
+- Usage distribution histograms
+- Optimisation recommendations based on P95 usage patterns, including estimated GiB-hours savings broken down per job
 
+**Understanding GiB-hours savings:** This unit captures both how much memory is wasted *and* how long jobs run. A saving of 1,200 GiB-hours shown as `(≈ 30.0 GiB/job × 40 jobs × 1.0 hr avg runtime)` means each job wastes ~30 GiB, across 40 jobs, each running ~1 hour on average. You can sanity-check each factor independently against your expectations.
+
+---
+
+### `histogram` — Runtime Distribution
+
+Plots job runtimes from cached CSV data.
+
+```bash
+python main.py histogram 12345
+python main.py histogram 12345 --percentiles 20
+python main.py histogram 12345 --print-list
+```
+
+Produces:
+- Scatter plot of job index vs. runtime (detects trends — e.g. later jobs running slower)
+- Percentile-binned ASCII histogram with red highlighting for bins whose median runtime is under 10 minutes (a signal that jobs may benefit from bundling)
+
+| Flag | Default | Description |
+|---|---|---|
+| `--percentiles N` | `10` | Number of percentile bins in the histogram |
+| `--print-list` | off | Print job IDs (`ClusterId.ProcId`) in fast-job bins |
+
+---
+
+### `dashboard` — Job Status Bar Chart
+
+Queries the HTCondor schedd directly (history + queue) and renders a live bar chart of job statuses.
+
+```bash
+python main.py dashboard 12345
+```
+
+Statuses shown: Idle, Running, Removing, Completed, Held, Transferring Output, Suspended.
+
+> Unlike other subcommands, `dashboard` does not use the cached CSV — it always queries the schedd live.
+
+---
+
+### `hold` — Held Job Analysis
+
+Queries the schedd for all held jobs in the cluster and groups them by hold reason code, using fuzzy string matching to bucket jobs with similar error messages.
+
+```bash
+python main.py hold 12345
+python main.py hold 12345 --min-count 5 --sort-by time
+python main.py hold 12345 --top 5 --code 34
+python main.py hold 12345 --show-job-ids --export-jobs held.csv
+```
+
+**Filtering options:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--min-count N` | `1` | Only show buckets with at least N jobs |
+| `--top N` | off | Show only the top N buckets |
+| `--code CODE` | off | Filter to a specific `HoldReasonCode` |
+
+**Sorting options:**
+
+| Flag | Choices | Default |
+|---|---|---|
+| `--sort-by` | `count`, `code`, `percent`, `time` | `count` |
+
+**Bucketing options:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--threshold RATIO` | `0.7` | Similarity threshold (0.0–1.0) for grouping similar error messages. Higher = stricter. |
+
+**Output options:**
+
+| Flag | Description |
+|---|---|
+| `--show-job-ids` | Display ProcIds in the output table |
+| `--export-jobs FILENAME` | Export held job IDs to a CSV (`ClusterId.ProcId`, code, label) |
+
+---
+
+## `fetch_cluster_data.py` — Data Fetch
+
+Fetches all job records for a cluster from the HTCondor schedd (history + queue) and writes them to `cluster_data/cluster_<ID>_jobs.csv`.
+
+```bash
+python fetch_cluster_data.py 12345
+python fetch_cluster_data.py 12345 /path/to/output/dir
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `CLUSTER_ID` | Yes | HTCondor cluster ID (must be an integer) |
+| `OUTPUT_DIR` | No | Directory for the CSV (default: `cluster_data/`) |
+
+The script validates that the cluster exists before fetching. Passing a non-integer cluster ID (e.g. accidentally passing a flag) raises an error immediately rather than querying the full job history.
+
+---
+
+## Data & Caching
+
+All analysis subcommands (except `dashboard` and `hold`) read from a cached CSV at:
+
+```
+cluster_data/cluster_<ID>_jobs.csv
+```
+
+This file is created by `fetch_cluster_data.py` or automatically by `main.py` on first use. To refresh stale data, re-run `fetch_cluster_data.py` — it overwrites the existing file.
+
+---
+
+## Dependencies
+
+- Python 3.8+
+- `htcondor2` (HTCondor Python bindings)
+- `numpy`
+- `tabulate`

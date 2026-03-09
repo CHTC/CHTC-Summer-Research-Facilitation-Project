@@ -1,8 +1,7 @@
 import sys
 import os
-import csv
 import numpy as np
-from datetime import datetime, timedelta
+from utils import safe_float, load_csv_for_cluster, format_seconds_human, format_epoch_human_relative
 
 
 """
@@ -10,59 +9,6 @@ This program takes data from the cluster_data folder and gives an ASCII histogra
 of the runtimes for a cluster. The runtimes are grouped by percentile range.
 """
 
-
-def format_seconds_human(seconds):
-    seconds = int(seconds)
-    if seconds == 0:
-        return "0s"
-    parts = []
-    days, seconds = divmod(seconds, 86400)
-    hours, seconds = divmod(seconds, 3600)
-    minutes, seconds = divmod(seconds, 60)
-    if days:
-        parts.append(f"{days}d")
-    if hours:
-        parts.append(f"{hours}h")
-    if minutes:
-        parts.append(f"{minutes}m")
-    if seconds:
-        parts.append(f"{seconds}s")
-    return " ".join(parts)
-
-
-def format_epoch_human_relative(epoch_seconds):
-    try:
-        event_time = datetime.fromtimestamp(int(epoch_seconds))
-        now = datetime.now()
-        delta = now - event_time
-
-        if delta < timedelta(minutes=1):
-            return "just now"
-        elif delta < timedelta(hours=1):
-            minutes = int(delta.total_seconds() // 60)
-            return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
-        elif delta < timedelta(days=1):
-            hours = int(delta.total_seconds() // 3600)
-            return f"{hours} hour{'s' if hours != 1 else ''} ago"
-        elif delta < timedelta(days=7):
-            days = delta.days
-            return f"{days} day{'s' if days != 1 else ''} ago"
-        elif delta < timedelta(days=30):
-            weeks = delta.days // 7
-            return f"{weeks} week{'s' if weeks != 1 else ''} ago"
-        else:
-            return event_time.strftime("%Y-%m-%d")
-    except Exception:
-        return "N/A"
-
-
-def safe_float(value):
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (ValueError, TypeError):
-        return None
 
 
 def scatter_plot_job_index_vs_runtime(cluster_id, jobs, height=12, width=60):
@@ -292,21 +238,7 @@ def histogram(cluster_id, jobs, percentiles=10, max_width=20, show_fast_jobs=Fal
 
 
 def load_data_for_cluster(cluster_id):
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(script_dir, "cluster_data")
-    filepath = os.path.join(data_dir, f"cluster_{cluster_id}_jobs.csv")
-
-    if not os.path.exists(filepath):
-        print(
-            "Cluster Data not found, please make sure you have the correct "
-            ".csv, filepath and the correct cluster id"
-        )
-        sys.exit(1)
-
-    with open(filepath, newline="", encoding="utf-8") as f:
-        jobs = list(csv.DictReader(f))
-
-    return jobs
+    return load_csv_for_cluster(cluster_id)
 
 
 def get_histogram_data(cluster_id):
@@ -314,16 +246,7 @@ def get_histogram_data(cluster_id):
     Return runtime analysis data as a dictionary for use by cluster_health.py.
     Does not print anything, just returns computed metrics.
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(script_dir, "cluster_data")
-    filepath = os.path.join(data_dir, f"cluster_{cluster_id}_jobs.csv")
-
-    if not os.path.exists(filepath):
-        return None
-
-    with open(filepath, newline="", encoding="utf-8") as f:
-        jobs = list(csv.DictReader(f))
-
+    jobs = load_csv_for_cluster(cluster_id, exit_on_missing=False)
     if not jobs:
         return None
 
