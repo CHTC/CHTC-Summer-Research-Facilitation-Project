@@ -1,6 +1,7 @@
 import os
 import csv
 import sys
+import argparse
 import elasticsearch
 
 
@@ -13,10 +14,10 @@ for a given ClusterId (and optionally, a specific User), using the Scroll API
 'cluster_data/' directory.
 
 Usage:
-    query.py <ClusterId> [User]
+    python query.py <ClusterId> [--user USER] [--output-dir DIR]
 
-NOTE: You need authentication to access data from the Elasticsearch database, that is why the ES_USER and ES_PASS are blanked 
-
+NOTE: You need authentication to access data from the Elasticsearch database.
+      Fill in ES_USER and ES_PASS before running.
 """
 
 # Constants
@@ -25,9 +26,10 @@ ES_INDEX = "adstash-ospool-job-history-*"
 MAX_RESULTS = 1000000
 SCROLL_DURATION = "5m"
 
-#Authenticaion to be filled
-ES_USER = "*****"  
+# Authentication — fill in before running
+ES_USER = "*****"
 ES_PASS = "************"
+
 
 def connect_to_elasticsearch():
     es = elasticsearch.Elasticsearch(ES_HOST, http_auth=(ES_USER, ES_PASS))
@@ -36,11 +38,11 @@ def connect_to_elasticsearch():
         sys.exit(1)
     return es
 
+
 def build_query(cluster_id, user=None):
     filters = [{"match": {"ClusterId": cluster_id}}]
     if user:
         filters.append({"match": {"Owner": user}})
-    
     return {
         "query": {
             "bool": {
@@ -49,18 +51,39 @@ def build_query(cluster_id, user=None):
         }
     }
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        prog="query",
+        description="Fetch all jobs for a cluster from Elasticsearch and save to CSV.",
+        epilog="Output: cluster_data/cluster_<CLUSTER_ID>_jobs.csv",
+    )
+    parser.add_argument(
+        "cluster_id",
+        metavar="CLUSTER_ID",
+        type=int,
+        help="HTCondor cluster ID to fetch (must be an integer).",
+    )
+    parser.add_argument(
+        "--user",
+        metavar="USER",
+        default=None,
+        help="Optional: filter jobs to a specific Owner/User.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        metavar="DIR",
+        default="cluster_data",
+        help="Directory to save the CSV file (default: cluster_data/).",
+    )
+    return parser.parse_args()
+
+
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python dump_cluster_jobs.py <ClusterId> [User]")
-        sys.exit(1)
-
-    try:
-        cluster_id = int(sys.argv[1])
-    except ValueError:
-        print("Error: ClusterId must be an integer.")
-        sys.exit(1)
-
-    user = sys.argv[2] if len(sys.argv) > 2 else None
+    args = parse_args()
+    cluster_id = args.cluster_id
+    user = args.user
+    output_dir = args.output_dir
 
     es = connect_to_elasticsearch()
     query = build_query(cluster_id, user)
@@ -89,12 +112,12 @@ def main():
         hits = response['hits']['hits']
 
     # Output directory and file
-    output_dir = os.path.join(os.getcwd(), "cluster_data")
+    # Always use cluster_<ID>_jobs.csv so the analytics suite can find it
     os.makedirs(output_dir, exist_ok=True)
+    csv_filename = os.path.join(output_dir, f"cluster_{cluster_id}_jobs.csv")
 
-    user_suffix = f"_{user}" if user else ""
-    csv_filename = os.path.join(output_dir, f"cluster_{cluster_id}{user_suffix}_jobs.csv")
-
+    if user:
+        print(f"Note: filtering by user '{user}' — output still written to standard filename for analytics suite compatibility.")
     print(f"📂 Writing to: {csv_filename}")
 
     with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
@@ -103,10 +126,15 @@ def main():
         for hit in all_hits:
             writer.writerow(hit['_source'])
 
-    print(f"Dumped {len(all_hits)} jobs for ClusterId {cluster_id}" + (f" and user '{user}'" if user else "") + f" to {csv_filename}")
+    print(
+        f"Dumped {len(all_hits)} jobs for ClusterId {cluster_id}"
+        + (f" filtered by user '{user}'" if user else "")
+        + f" to {csv_filename}"
+    )
 
     # Clean up scroll
     es.clear_scroll(scroll_id=scroll_id)
+
 
 if __name__ == "__main__":
     main()
